@@ -47,9 +47,8 @@ chrome.webRequest.onHeadersReceived.addListener(
     // ponytail: referer is the requesting frame's origin; good enough for CDNs that check
     // origin. Upgrade path is webNavigation.getFrame for the frame's full URL.
     const referer = d.initiator && d.initiator !== "null" ? d.initiator + "/" : "";
-    update(d.tabId, (list) =>
-      list.some((m) => m.url === d.url) ? list : [...list, { url: d.url, kind, size, referer, at: Date.now() }].slice(-MAX),
-    );
+    const entry = { url: d.url, kind, size, referer, frameId: d.frameId, at: Date.now() };
+    update(d.tabId, (list) => (list.some((m) => m.url === d.url) ? list : [...list, entry].slice(-MAX)));
   },
   { urls: ["<all_urls>"], types: ["main_frame", "xmlhttprequest", "media", "other"] },
   ["responseHeaders"],
@@ -69,7 +68,7 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
     height: Number(m.height) || null,
     size: null,
     referer: typeof m.referer === "string" ? m.referer : "",
-    thumb: typeof m.thumb === "string" && /^https?:/.test(m.thumb) ? m.thumb : "",
+    frameId: sender.frameId,
     at: Date.now(),
   };
   update(tabId, (list) => [...list.filter((x) => x.url !== entry.url), entry].slice(-MAX));

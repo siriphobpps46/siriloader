@@ -139,7 +139,7 @@ export default function App() {
       const src = {
         ...inc,
         referer: isWeb(inc.referer) ? inc.referer : null,
-        thumbnail: isWeb(inc.thumbnail) ? inc.thumbnail : null,
+        thumbnail: isWeb(inc.thumbnail) || inc.thumbnail?.startsWith("data:image/") ? inc.thumbnail : null,
       };
       setUrl(src.url);
       setSource(src);
