@@ -22,7 +22,21 @@ Tauri v2 · React · Rust · yt-dlp + ffmpeg · 100% local
 - **Chrome extension, Video DownloadHelper-style.** It reads what the page's player actually loads, so it finds HLS/DASH playlists even when sites disguise them as `.txt`/`.jpg` or fetch them through a service worker. The popup lists them longest first, so the real video sits above 15-second ads, and passes the page as referer and its title as the file name.
 - **Feels like a Mac app.** Unified toolbar, sidebar filters by status and source, a sheet for choosing quality, `⌘,` settings, `⌘L` to focus the link field, light / dark / follow system.
 
-## Requirements
+## Download
+
+No build tools needed. Works on Apple Silicon and Intel Macs.
+
+1. Install the download tools once (needs [Homebrew](https://brew.sh)):
+
+   ```bash
+   brew install yt-dlp ffmpeg
+   ```
+
+2. Download **`SiriLoader_…_universal.dmg`** from [Releases](https://github.com/siriphobpps46/siriloader/releases/latest) and drag SiriLoader into Applications.
+3. **First launch:** the app isn't notarized by Apple, so macOS blocks it the first time. Open it once, then go to **System Settings → Privacy & Security** and click **Open Anyway**. (Or in Terminal: `xattr -dr com.apple.quarantine /Applications/SiriLoader.app`.)
+4. **Chrome extension:** download **`SiriLoader-extension-….zip`** from the same release, unzip it, then follow [Chrome extension](#chrome-extension) below.
+
+## Build from source
 
 - macOS (Apple Silicon or Intel)
 - [Homebrew](https://brew.sh) for the download tools:
@@ -33,8 +47,6 @@ Tauri v2 · React · Rust · yt-dlp + ffmpeg · 100% local
 
   ffmpeg is required: YouTube no longer serves video and audio in one file. If the app can't find either tool it says so and shows this command.
 - To build: Node.js 18+ and the Rust toolchain (`rustup`)
-
-## Install
 
 ```bash
 git clone https://github.com/siriphobpps46/siriloader.git
@@ -48,7 +60,7 @@ For development with hot reload: `npm run tauri dev`.
 ### Chrome extension
 
 1. Open `chrome://extensions` and turn on **Developer mode**
-2. **Load unpacked** → choose the `extension/` folder
+2. **Load unpacked** → choose the unzipped folder (or `extension/` in this repo)
 3. Pin the SiriLoader icon
 
 On a page: play the video, then click the icon. The badge counts what was found; pick an entry, or **Send this page** for sites yt-dlp already knows (YouTube, X, TikTok, Instagram…). Right-click works too: *Send this link / video to SiriLoader*.

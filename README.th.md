@@ -22,7 +22,21 @@ Tauri v2 · React · Rust · yt-dlp + ffmpeg · ทำงานในเคร�
 - **Extension Chrome แบบ Video DownloadHelper** ดูจากไฟล์ที่ player โหลดจริง เลยเจอ playlist แบบ HLS/DASH แม้เว็บจะปลอมนามสกุลเป็น `.txt`/`.jpg` หรือโหลดผ่าน service worker ใน popup เรียงอันที่ยาวที่สุดไว้บน วิดีโอหลักจะอยู่เหนือโฆษณา 15 วินาที และส่งหน้าเว็บไปเป็น Referer กับใช้ชื่อหน้าเว็บเป็นชื่อไฟล์
 - **หน้าตาแบบแอป Mac ทั่วไป** แถบด้านบนรวมช่องลิงก์ แถบด้านข้างกรองตามสถานะและแหล่งที่มา หน้าต่าง sheet สำหรับเลือกความชัด ตั้งค่าด้วย `⌘,` ไปที่ช่องลิงก์ด้วย `⌘L` และเลือกธีม สว่าง / มืด / ตามระบบ ได้
 
-## สิ่งที่ต้องมี
+## ดาวน์โหลด
+
+ไม่ต้อง build เอง ใช้ได้ทั้ง Mac ชิป Apple และ Intel
+
+1. ติดตั้งเครื่องมือดาวน์โหลดครั้งเดียว (ต้องมี [Homebrew](https://brew.sh)):
+
+   ```bash
+   brew install yt-dlp ffmpeg
+   ```
+
+2. โหลดไฟล์ **`SiriLoader_…_universal.dmg`** จาก [Releases](https://github.com/siriphobpps46/siriloader/releases/latest) แล้วลาก SiriLoader ใส่ Applications
+3. **เปิดครั้งแรก:** แอปยังไม่ได้ผ่านการรับรอง (notarize) กับ Apple macOS จะไม่ยอมเปิดในครั้งแรก ให้ลองเปิดหนึ่งครั้ง แล้วไปที่ **System Settings → Privacy & Security** กด **Open Anyway** (หรือรันใน Terminal: `xattr -dr com.apple.quarantine /Applications/SiriLoader.app`)
+4. **Extension Chrome:** โหลดไฟล์ **`SiriLoader-extension-….zip`** จาก release เดียวกัน แตกไฟล์ แล้วทำตามหัวข้อ [Extension Chrome](#extension-chrome) ด้านล่าง
+
+## Build เอง
 
 - macOS (Apple Silicon หรือ Intel)
 - [Homebrew](https://brew.sh) สำหรับติดตั้งเครื่องมือดาวน์โหลด:
@@ -33,8 +47,6 @@ Tauri v2 · React · Rust · yt-dlp + ffmpeg · ทำงานในเคร�
 
   ต้องมี ffmpeg เพราะ YouTube ไม่ส่งภาพกับเสียงมาเป็นไฟล์เดียวแล้ว ถ้าแอปหาเครื่องมือตัวไหนไม่เจอ จะแจ้งพร้อมคำสั่งนี้ให้
 - ถ้าจะ build เอง: Node.js 18 ขึ้นไป และ Rust (`rustup`)
-
-## ติดตั้ง
 
 ```bash
 git clone https://github.com/siriphobpps46/siriloader.git
@@ -48,7 +60,7 @@ npm run install:app   # build แบบ release แล้วติดตั้�
 ### Extension Chrome
 
 1. เปิด `chrome://extensions` แล้วเปิด **Developer mode**
-2. กด **Load unpacked** แล้วเลือกโฟลเดอร์ `extension/`
+2. กด **Load unpacked** แล้วเลือกโฟลเดอร์ที่แตกจาก zip (หรือ `extension/` ใน repo นี้)
 3. ปักหมุดไอคอน SiriLoader ไว้บนแถบเครื่องมือ
 
 วิธีใช้: เปิดหน้าเว็บ กดเล่นวิดีโอ แล้วกดไอคอน ตัวเลขบนไอคอนบอกว่าเจอกี่ไฟล์ เลือกไฟล์ที่ต้องการ หรือกด **ส่งหน้านี้** สำหรับเว็บที่ yt-dlp รู้จักอยู่แล้ว (YouTube, X, TikTok, Instagram ฯลฯ) คลิกขวาก็ได้: *ส่งลิงก์นี้ / ส่งวิดีโอนี้เข้า SiriLoader*
