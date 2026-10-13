@@ -1,5 +1,6 @@
-// Two jobs: watch each tab's network traffic for video streams/files (the badge counts them,
-// the popup lists them), and the right-click "send to SiriLoader" menu items.
+// Two jobs: collect each tab's video streams/files (from webRequest here, and from hook.js
+// which reads what the player actually loaded; the badge counts them, the popup lists them),
+// and the right-click "send to SiriLoader" menu items.
 import { send } from "./send.js";
 
 const STREAM_URL = /\.(m3u8|mpd)(\?|#|$)/i;
@@ -53,6 +54,25 @@ chrome.webRequest.onHeadersReceived.addListener(
   { urls: ["<all_urls>"], types: ["main_frame", "xmlhttprequest", "media", "other"] },
   ["responseHeaders"],
 );
+
+// From hook.js via relay.js: richer than webRequest (duration, height, full-frame referer),
+// so it replaces a webRequest entry for the same URL.
+chrome.runtime.onMessage.addListener((msg, sender) => {
+  const m = msg?.sniffed;
+  const tabId = sender.tab?.id;
+  if (!m || tabId == null || !/^https?:/.test(m.url)) return;
+  const entry = {
+    url: m.url,
+    kind: m.kind === "DASH" ? "DASH" : "HLS",
+    master: !!m.master,
+    duration: Number(m.duration) || null,
+    height: Number(m.height) || null,
+    size: null,
+    referer: typeof m.referer === "string" ? m.referer : "",
+    at: Date.now(),
+  };
+  update(tabId, (list) => [...list.filter((x) => x.url !== entry.url), entry].slice(-MAX));
+});
 
 chrome.tabs.onRemoved.addListener((tabId) => chrome.storage.session.remove(key(tabId)));
 
