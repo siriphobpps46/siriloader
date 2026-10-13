@@ -61,11 +61,12 @@ const store = {
   },
 };
 
-// siriloader://download?url=<page or media URL> — sent by the browser extension.
+// siriloader://download?url=<URL>, or a bare URL from the extension's loopback inbox.
 // Only ever fills the box and probes; any web page can open this scheme, so the user still clicks Download.
 function linkFrom(deep: string) {
   try {
-    const u = new URL(new URL(deep).searchParams.get("url") ?? "");
+    const d = new URL(deep);
+    const u = d.protocol === "siriloader:" ? new URL(d.searchParams.get("url") ?? "") : d;
     return u.protocol === "http:" || u.protocol === "https:" ? u.href : null;
   } catch {
     return null;
@@ -136,9 +137,11 @@ export default function App() {
     };
     getCurrent().then(take);
     const offLink = onOpenUrl(take);
+    const offInbox = listen<string>("open-url", (e) => take([e.payload]));
     return () => {
       off.then((f) => f());
       offLink.then((f) => f());
+      offInbox.then((f) => f());
     };
   }, []);
 
