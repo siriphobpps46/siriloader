@@ -25,13 +25,11 @@ function clock(s) {
   return `${h ? h + ":" : ""}${mm}:${String(s % 60).padStart(2, "0")}`;
 }
 
-// Ask relay.js for a cover: first the frame the stream came from, then the top frame.
-// "" when the page has no content script (opened before the extension was reloaded).
-const ask = (frameId, mode) => chrome.tabs.sendMessage(tab.id, { thumb: mode }, { frameId }).catch(() => "");
-const cover = async (frameId) => (frameId != null && frameId !== 0 && (await ask(frameId, "player"))) || (await ask(0, "page")) || "";
+// Cover from the page's top frame (og:image / player poster); "" on pages without the content script.
+const pageThumb = () => chrome.tabs.sendMessage(tab.id, { thumb: true }, { frameId: 0 }).catch(() => "");
 
-async function go(item, frameId) {
-  const result = await send({ ...item, thumbnail: await cover(frameId) }, tab.id);
+async function go(item) {
+  const result = await send({ ...item, thumbnail: item.thumbnail || (await pageThumb()) }, tab.id);
   $("status").className = result === "bad" ? "bad" : "";
   $("status").textContent = {
     ok: "ส่งเข้า SiriLoader แล้ว ✓",
@@ -62,7 +60,7 @@ for (const m of found) {
     b.append(s);
   }
   b.title = m.url;
-  b.onclick = () => go({ url: m.url, referer: m.referer || tab.url, title: tab.title }, m.frameId);
+  b.onclick = () => go({ url: m.url, referer: m.referer || tab.url, title: tab.title, thumbnail: m.thumb });
   li.append(b);
   $("list").append(li);
 }
