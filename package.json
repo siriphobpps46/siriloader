@@ -9,7 +9,7 @@
     "tauri": "tauri",
     "icons": "tauri icon assets/logo/icon.svg",
     "build:app": "tauri build",
-    "install:app": "tauri build && cp -R src-tauri/target/release/bundle/macos/SiriLoader.app /Applications/"
+    "install:app": "tauri build && rm -rf /Applications/SiriLoader.app && cp -R src-tauri/target/release/bundle/macos/SiriLoader.app /Applications/"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.1",

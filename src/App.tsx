@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { getCurrent, onOpenUrl } from "@tauri-apps/plugin-deep-link";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import mark from "../assets/logo/mark-navy.svg";
 import { Icon, type IconName } from "./icons";
 
@@ -48,6 +49,7 @@ type Ev =
   | { kind: "done"; id: string; path: string }
   | { kind: "error"; id: string; message: string }
   | { kind: "cancelled"; id: string };
+type Theme = "system" | "light" | "dark";
 type Filter = { by: "status"; value: "all" | "running" | "done" | "failed" } | { by: "site"; value: string };
 
 // localStorage only remembers conveniences (folder, last quality, history); losing it is harmless.
@@ -126,6 +128,7 @@ export default function App() {
   const [dir, setDir] = useState(() => store.get("dir", ""));
   const [compat, setCompat] = useState(() => store.get("compat", false));
   const [settings, setSettings] = useState(false);
+  const [theme, setTheme] = useState<Theme>(() => store.get("theme", "system"));
   const [filter, setFilter] = useState<Filter>({ by: "status", value: "all" });
   // Referer + page title that came with a sniffed link; dropped as soon as the user edits the box.
   const [source, setSource] = useState<Incoming | null>(null);
@@ -192,6 +195,14 @@ export default function App() {
   useEffect(() => store.set("quality", qualityId), [qualityId]);
   useEffect(() => store.set("audioMode", audioMode), [audioMode]);
   useEffect(() => store.set("compat", compat), [compat]);
+  // Theme the native window, not just the CSS: the title bar, pop-up menus and
+  // prefers-color-scheme all follow it. null hands it back to the system.
+  useEffect(() => {
+    store.set("theme", theme);
+    getCurrentWindow()
+      .setTheme(theme === "system" ? null : theme)
+      .catch(() => {});
+  }, [theme]);
 
   async function probe(target = url, src = source) {
     if (!target.trim()) return;
@@ -489,6 +500,12 @@ export default function App() {
               <Icon name="folder" />
               <span>{homeShort(dir)}</span>
             </button>
+            <label htmlFor="theme">ลักษณะ</label>
+            <select id="theme" value={theme} onChange={(e) => setTheme(e.target.value as Theme)}>
+              <option value="system">ตามระบบ</option>
+              <option value="light">สว่าง</option>
+              <option value="dark">มืด</option>
+            </select>
             <label>ค่าเริ่มต้น</label>
             <label className="check">
               <input type="checkbox" checked={compat} onChange={(e) => setCompat(e.target.checked)} />
