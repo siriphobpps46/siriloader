@@ -4,19 +4,19 @@
 const INBOX = "http://127.0.0.1:47821/send";
 
 /** @returns {Promise<"ok" | "launch" | "bad">} */
-export async function send({ url, referer = "", title = "" }, tabId) {
+export async function send({ url, referer = "", title = "", thumbnail = "" }, tabId) {
   if (!/^https?:\/\//i.test(url ?? "")) return "bad";
   const clean = (title ?? "").replace(/\s+/g, " ").trim();
   try {
     const r = await fetch(INBOX, {
       method: "POST",
       headers: { "X-SiriLoader": "1" },
-      body: [url, referer ?? "", clean].join("\n"),
+      body: [url, referer ?? "", clean, thumbnail ?? ""].join("\n"),
     });
     if (!r.ok) throw new Error(String(r.status));
     return "ok";
   } catch {
-    const q = new URLSearchParams({ url, referer: referer ?? "", title: clean });
+    const q = new URLSearchParams({ url, referer: referer ?? "", title: clean, thumbnail: thumbnail ?? "" });
     chrome.tabs.update(tabId, { url: "siriloader://download?" + q });
     return "launch";
   }

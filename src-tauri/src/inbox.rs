@@ -18,6 +18,7 @@ pub struct Incoming {
     url: String,
     referer: Option<String>,
     title: Option<String>,
+    thumbnail: Option<String>,
 }
 
 pub fn serve(app: AppHandle) {
@@ -66,7 +67,8 @@ fn accept(req: &str) -> Option<Incoming> {
     let url = parts.next().filter(web)?.to_string();
     let referer = parts.next().filter(web).map(str::to_string);
     let title = parts.next().filter(|t| !t.is_empty()).map(str::to_string);
-    Some(Incoming { url, referer, title })
+    let thumbnail = parts.next().filter(web).map(str::to_string);
+    Some(Incoming { url, referer, title, thumbnail })
 }
 
 #[cfg(test)]
@@ -76,13 +78,14 @@ mod tests {
     #[test]
     fn takes_extension_post() {
         let r = "POST /send HTTP/1.1\r\nHost: x\r\nX-SiriLoader: 1\r\n\r\nhttps://a.b/c";
-        let only_url = Incoming { url: "https://a.b/c".into(), referer: None, title: None };
+        let only_url = Incoming { url: "https://a.b/c".into(), referer: None, title: None, thumbnail: None };
         assert_eq!(accept(r), Some(only_url));
-        let r = "POST /send HTTP/1.1\r\nx-siriloader: 1\r\n\r\nhttps://cdn.x/m.m3u8\nhttps://site.x/v/1\nMy clip";
+        let r = "POST /send HTTP/1.1\r\nx-siriloader: 1\r\n\r\nhttps://cdn.x/m.m3u8\nhttps://site.x/v/1\nMy clip\nhttps://site.x/cover.jpg";
         let sniffed = Incoming {
             url: "https://cdn.x/m.m3u8".into(),
             referer: Some("https://site.x/v/1".into()),
             title: Some("My clip".into()),
+            thumbnail: Some("https://site.x/cover.jpg".into()),
         };
         assert_eq!(accept(r), Some(sniffed));
     }

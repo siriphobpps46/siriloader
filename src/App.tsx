@@ -17,7 +17,7 @@ type Info = {
   qualities: Quality[];
   h264_max: number | null;
 };
-type Incoming = { url: string; referer?: string | null; title?: string | null };
+type Incoming = { url: string; referer?: string | null; title?: string | null; thumbnail?: string | null };
 type Status = "downloading" | "processing" | "done" | "error" | "cancelled";
 type Job = {
   id: string;
@@ -71,7 +71,7 @@ const isWeb = (s?: string | null) => !!s && /^https?:\/\//i.test(s);
 function fromDeepLink(deep: string): Incoming | null {
   try {
     const p = new URL(deep).searchParams;
-    return { url: p.get("url") ?? "", referer: p.get("referer"), title: p.get("title") };
+    return { url: p.get("url") ?? "", referer: p.get("referer"), title: p.get("title"), thumbnail: p.get("thumbnail") };
   } catch {
     return null;
   }
@@ -136,7 +136,11 @@ export default function App() {
     );
     const take = (inc: Incoming | null) => {
       if (!inc || !isWeb(inc.url)) return;
-      const src = { ...inc, referer: isWeb(inc.referer) ? inc.referer : null };
+      const src = {
+        ...inc,
+        referer: isWeb(inc.referer) ? inc.referer : null,
+        thumbnail: isWeb(inc.thumbnail) ? inc.thumbnail : null,
+      };
       setUrl(src.url);
       setSource(src);
       probe(src.url, src);
@@ -164,8 +168,9 @@ export default function App() {
     setInfo(null);
     try {
       const i = await invoke<Info>("probe", { url: target, referer: src?.referer ?? null });
-      // A sniffed stream is titled "master"/"index"; the page title is what the user knows it by.
-      if (seq === probeSeq.current) setInfo(src?.title ? { ...i, title: src.title } : i);
+      // A sniffed stream is titled "master"/"index" and has no cover; the page supplies both.
+      if (seq === probeSeq.current)
+        setInfo({ ...i, title: src?.title || i.title, thumbnail: i.thumbnail || src?.thumbnail || null });
     } catch (e) {
       if (seq === probeSeq.current) setError(String(e));
     } finally {
