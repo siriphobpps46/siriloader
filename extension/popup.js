@@ -25,11 +25,8 @@ function clock(s) {
   return `${h ? h + ":" : ""}${mm}:${String(s % 60).padStart(2, "0")}`;
 }
 
-// Cover from the page's top frame (og:image / player poster); "" on pages without the content script.
-const pageThumb = () => chrome.tabs.sendMessage(tab.id, { thumb: true }, { frameId: 0 }).catch(() => "");
-
 async function go(item) {
-  const result = await send({ ...item, thumbnail: item.thumbnail || (await pageThumb()) }, tab.id);
+  const result = await send(item, tab.id);
   $("status").className = result === "bad" ? "bad" : "";
   $("status").textContent = {
     ok: "ส่งเข้า SiriLoader แล้ว ✓",
@@ -60,7 +57,7 @@ for (const m of found) {
     b.append(s);
   }
   b.title = m.url;
-  b.onclick = () => go({ url: m.url, referer: m.referer || tab.url, title: tab.title, thumbnail: m.thumb });
+  b.onclick = () => go({ url: m.url, referer: m.referer || tab.url, title: tab.title });
   li.append(b);
   $("list").append(li);
 }

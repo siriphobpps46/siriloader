@@ -69,7 +69,6 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
     height: Number(m.height) || null,
     size: null,
     referer: typeof m.referer === "string" ? m.referer : "",
-    thumb: typeof m.thumb === "string" && /^https?:/.test(m.thumb) ? m.thumb : "",
     at: Date.now(),
   };
   update(tabId, (list) => [...list.filter((x) => x.url !== entry.url), entry].slice(-MAX));
