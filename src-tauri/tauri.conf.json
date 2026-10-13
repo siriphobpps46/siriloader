@@ -14,11 +14,11 @@
       {
         "label": "main",
         "title": "SiriLoader",
-        "width": 920,
-        "height": 720,
-        "minWidth": 560,
-        "minHeight": 480,
-        "backgroundColor": "#F5F7FB",
+        "width": 960,
+        "height": 640,
+        "minWidth": 520,
+        "minHeight": 400,
+        "backgroundColor": "#FFFFFF",
         "center": true,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true

@@ -2,9 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { getCurrent, onOpenUrl } from "@tauri-apps/plugin-deep-link";
-import logo from "../assets/logo/tile.svg";
+import mark from "../assets/logo/mark-navy.svg";
+import { Icon, type IconName } from "./icons";
 
 type Tools = { ytdlp: string | null; ffmpeg: string | null; version: string | null };
 type Quality = { id: string; label: string; detail: string; size: number | null; format: string; audio_only: boolean };
@@ -24,6 +25,7 @@ type Job = {
   url: string;
   title: string;
   thumbnail: string | null;
+  site?: string;
   quality: string;
   format: string;
   audioOnly: boolean;
@@ -46,6 +48,7 @@ type Ev =
   | { kind: "done"; id: string; path: string }
   | { kind: "error"; id: string; message: string }
   | { kind: "cancelled"; id: string };
+type Filter = { by: "status"; value: "all" | "running" | "done" | "failed" } | { by: "site"; value: string };
 
 // localStorage only remembers conveniences (folder, last quality, history); losing it is harmless.
 const store = {
@@ -65,6 +68,8 @@ const store = {
 };
 
 const isWeb = (s?: string | null) => !!s && /^https?:\/\//i.test(s);
+const running = (j: Job) => j.status === "downloading" || j.status === "processing";
+const failed = (j: Job) => j.status === "error" || j.status === "cancelled";
 
 // siriloader://download?url=&referer=&title= — the extension's fallback when the app is closed.
 // Like the loopback inbox, it only fills the box and probes; the user still clicks Download.
@@ -76,6 +81,15 @@ function fromDeepLink(deep: string): Incoming | null {
     return null;
   }
 }
+
+// yt-dlp's extractor key → what people call the site. Anything generic is "other sites".
+function siteName(key?: string) {
+  if (!key || /^(generic|html5mediaembed)$/i.test(key)) return "เว็บอื่น ๆ";
+  const known: Record<string, string> = { youtube: "YouTube", twitter: "X", tiktok: "TikTok", facebook: "Facebook" };
+  return known[key.toLowerCase()] ?? key;
+}
+
+const siteIcon = (name: string): IconName => (name === "YouTube" ? "play" : "globe");
 
 function bytes(n?: number | null) {
   if (!n) return "";
@@ -94,6 +108,13 @@ function clock(s?: number | null) {
   return h ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}`;
 }
 
+const homeShort = (p: string) => p.replace(/^\/Users\/[^/]+/, "~");
+
+function qualityLabel(q: Quality) {
+  const base = q.id === "best" ? `ชัดที่สุด — ${q.detail}` : q.detail.startsWith(q.label) ? q.detail : `${q.label} — ${q.detail}`;
+  return q.size ? `${base} (~${bytes(q.size)})` : base;
+}
+
 export default function App() {
   const [tools, setTools] = useState<Tools | null>(null);
   const [url, setUrl] = useState("");
@@ -101,16 +122,18 @@ export default function App() {
   const [probing, setProbing] = useState(false);
   const [error, setError] = useState("");
   const [qualityId, setQualityId] = useState(() => store.get("quality", "best"));
+  const [audioMode, setAudioMode] = useState(() => store.get("audioMode", false));
   const [dir, setDir] = useState(() => store.get("dir", ""));
   const [compat, setCompat] = useState(() => store.get("compat", false));
+  const [settings, setSettings] = useState(false);
+  const [filter, setFilter] = useState<Filter>({ by: "status", value: "all" });
   // Referer + page title that came with a sniffed link; dropped as soon as the user edits the box.
   const [source, setSource] = useState<Incoming | null>(null);
   const [jobs, setJobs] = useState<Job[]>(() =>
-    store.get<Job[]>("jobs", []).map((j) =>
-      j.status === "downloading" || j.status === "processing" ? { ...j, status: "cancelled" } : j,
-    ),
+    store.get<Job[]>("jobs", []).map((j) => (running(j) ? { ...j, status: "cancelled" } : j)),
   );
   const probeSeq = useRef(0);
+  const field = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     invoke<Tools>("tools").then(setTools);
@@ -144,16 +167,30 @@ export default function App() {
     getCurrent().then((urls) => take(urls?.[0] ? fromDeepLink(urls[0]) : null));
     const offLink = onOpenUrl((urls) => take(fromDeepLink(urls[0])));
     const offInbox = listen<Incoming>("open-url", (e) => take(e.payload));
+    // ⌘L jumps to the link field, ⌘, opens settings — the usual Mac shortcuts.
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.metaKey) return;
+      if (e.key === "l") {
+        e.preventDefault();
+        field.current?.select();
+      } else if (e.key === ",") {
+        e.preventDefault();
+        setSettings(true);
+      }
+    };
+    window.addEventListener("keydown", onKey);
     return () => {
       off.then((f) => f());
       offLink.then((f) => f());
       offInbox.then((f) => f());
+      window.removeEventListener("keydown", onKey);
     };
   }, []);
 
   useEffect(() => store.set("jobs", jobs.slice(0, 100)), [jobs]);
   useEffect(() => store.set("dir", dir), [dir]);
   useEffect(() => store.set("quality", qualityId), [qualityId]);
+  useEffect(() => store.set("audioMode", audioMode), [audioMode]);
   useEffect(() => store.set("compat", compat), [compat]);
 
   async function probe(target = url, src = source) {
@@ -173,11 +210,20 @@ export default function App() {
     }
   }
 
-  const quality = info?.qualities.find((q) => q.id === qualityId) ?? info?.qualities[0];
-  const useCompat = compat && !quality?.audio_only;
+  const videoQualities = info?.qualities.filter((q) => !q.audio_only) ?? [];
+  const audioQuality = info?.qualities.find((q) => q.audio_only);
+  const useAudio = audioMode && !!audioQuality;
+  const quality = useAudio ? audioQuality : (videoQualities.find((q) => q.id === qualityId) ?? videoQualities[0]);
+  const useCompat = compat && !useAudio;
   const qualityHeight = Number(quality?.detail.match(/^(\d+)p/)?.[1] ?? 0);
   // Only warn when MP4 mode will actually land below what was picked.
   const compatCap = useCompat && info?.h264_max && qualityHeight > info.h264_max ? info.h264_max : null;
+
+  function closeSheet() {
+    probeSeq.current++;
+    setInfo(null);
+    setProbing(false);
+  }
 
   async function download() {
     if (!info || !quality) return;
@@ -186,7 +232,8 @@ export default function App() {
       url: url.trim(),
       title: info.title,
       thumbnail: info.thumbnail,
-      quality: (quality.id === "best" ? `ชัดที่สุด · ${quality.detail}` : quality.label) + (useCompat ? " · MP4" : ""),
+      site: siteName(info.site),
+      quality: (useAudio ? "MP3" : quality.id === "best" ? `ชัดที่สุด · ${quality.detail}` : quality.label) + (useCompat ? " · MP4" : ""),
       format: quality.format,
       audioOnly: quality.audio_only,
       compat: useCompat,
@@ -199,6 +246,7 @@ export default function App() {
     setUrl("");
     setSource(null);
     setInfo(null);
+    setFilter({ by: "status", value: "all" });
     run(job);
   }
 
@@ -226,191 +274,321 @@ export default function App() {
     if (typeof d === "string") setDir(d);
   }
 
-  const missing = tools && (!tools.ytdlp || !tools.ffmpeg);
+  const missing = !!tools && (!tools.ytdlp || !tools.ffmpeg);
+  const active = jobs.filter(running);
+  const speed = active.reduce((s, j) => s + (j.status === "downloading" ? (j.speed ?? 0) : 0), 0);
+  const sites = [...new Set(jobs.map((j) => j.site ?? "เว็บอื่น ๆ"))];
+  const shown = jobs.filter((j) =>
+    filter.by === "site"
+      ? (j.site ?? "เว็บอื่น ๆ") === filter.value
+      : filter.value === "running"
+        ? running(j)
+        : filter.value === "done"
+          ? j.status === "done"
+          : filter.value === "failed"
+            ? failed(j)
+            : true,
+  );
+  const isOn = (f: Filter) => f.by === filter.by && f.value === filter.value;
+  const sideItem = (f: Filter, icon: IconName, label: string, count: number) => (
+    <button key={f.by + f.value} className={isOn(f) ? "item on" : "item"} onClick={() => setFilter(f)}>
+      <Icon name={icon} />
+      <span>{label}</span>
+      <b>{count || ""}</b>
+    </button>
+  );
 
   return (
     <div className="app">
-      <header className="bar" data-tauri-drag-region>
-        <img src={logo} className="logo" alt="" data-tauri-drag-region />
-        <span className="name" data-tauri-drag-region>
-          <b>Siri</b>Loader
-        </span>
-        {tools?.version && <span className="ver">yt-dlp {tools.version}</span>}
+      <header className="toolbar" data-tauri-drag-region>
+        <form
+          className="field"
+          onSubmit={(e) => {
+            e.preventDefault();
+            probe();
+          }}
+        >
+          <Icon name="link" />
+          <input
+            ref={field}
+            autoFocus
+            value={url}
+            placeholder="วางลิงก์วิดีโอหรือเสียง…"
+            spellCheck={false}
+            onChange={(e) => {
+              setUrl(e.target.value);
+              setSource(null);
+            }}
+            onPaste={(e) => {
+              const t = e.clipboardData.getData("text").trim();
+              if (isWeb(t)) {
+                e.preventDefault();
+                setUrl(t);
+                setSource(null);
+                probe(t, null);
+              }
+            }}
+          />
+        </form>
+        <button className="btn primary" disabled={probing || !url.trim()} onClick={() => probe()}>
+          {probing ? <span className="spin" /> : "ดาวน์โหลด"}
+        </button>
+        <button className="tool" title="เปิดโฟลเดอร์ที่บันทึก" onClick={() => openPath(dir)}>
+          <Icon name="folder" size={18} />
+        </button>
+        <button className="tool" title="ตั้งค่า (⌘,)" onClick={() => setSettings(true)}>
+          <Icon name="gear" size={18} />
+        </button>
       </header>
 
-      <main>
-        {missing && (
-          <div className="notice">
-            <b>ต้องติดตั้งเครื่องมืออีกนิดก่อนใช้งาน</b>
-            <span>
-              ยังไม่พบ {[!tools.ytdlp && "yt-dlp", !tools.ffmpeg && "ffmpeg"].filter(Boolean).join(" และ ")} — รันคำสั่งนี้ใน
-              Terminal แล้วกดตรวจใหม่
-            </span>
-            <div className="row">
-              <code>brew install yt-dlp ffmpeg</code>
-              <button className="ghost" onClick={() => navigator.clipboard.writeText("brew install yt-dlp ffmpeg")}>
-                คัดลอก
-              </button>
-              <button className="ghost" onClick={() => invoke<Tools>("tools").then(setTools)}>
+      <div className="body">
+        <nav className="side">
+          <h6>ดาวน์โหลด</h6>
+          {sideItem({ by: "status", value: "all" }, "tray", "ทั้งหมด", jobs.length)}
+          {sideItem({ by: "status", value: "running" }, "clock", "กำลังโหลด", active.length)}
+          {sideItem({ by: "status", value: "done" }, "check", "เสร็จแล้ว", jobs.filter((j) => j.status === "done").length)}
+          {sideItem({ by: "status", value: "failed" }, "warn", "ไม่สำเร็จ", jobs.filter(failed).length)}
+          {sites.length > 0 && <h6>แหล่งที่มา</h6>}
+          {sites.map((s) =>
+            sideItem({ by: "site", value: s }, siteIcon(s), s, jobs.filter((j) => (j.site ?? "เว็บอื่น ๆ") === s).length),
+          )}
+        </nav>
+
+        <main className="main">
+          {missing && (
+            <div className="banner">
+              <Icon name="warn" />
+              <span>
+                ยังไม่พบ {[!tools.ytdlp && "yt-dlp", !tools.ffmpeg && "ffmpeg"].filter(Boolean).join(" และ ")} — รัน{" "}
+                <code>brew install yt-dlp ffmpeg</code> ใน Terminal
+              </span>
+              <button className="link" onClick={() => invoke<Tools>("tools").then(setTools)}>
                 ตรวจใหม่
               </button>
             </div>
-          </div>
-        )}
-
-        <section className="hero">
-          <h1>วางลิงก์วิดีโอหรือเสียง</h1>
-          <p>รองรับ YouTube, X, TikTok, Instagram, Facebook และเว็บอีกนับพัน</p>
-          <form
-            className="input"
-            onSubmit={(e) => {
-              e.preventDefault();
-              probe();
-            }}
-          >
-            <input
-              autoFocus
-              value={url}
-              placeholder="https://…"
-              onChange={(e) => {
-                setUrl(e.target.value);
-                setSource(null);
-              }}
-              onPaste={(e) => {
-                const t = e.clipboardData.getData("text").trim();
-                if (/^https?:\/\//i.test(t)) {
-                  e.preventDefault();
-                  setUrl(t);
-                  setSource(null);
-                  probe(t, null);
-                }
-              }}
-            />
-            <button className="primary" disabled={probing || !url.trim()}>
-              {probing ? <span className="spin" /> : "ดึงข้อมูล"}
-            </button>
-          </form>
-          {error && <p className="err">{error}</p>}
-        </section>
-
-        {probing && <div className="card skeleton" />}
-
-        {info && quality && (
-          <section className="card">
-            <div className="meta">
-              {info.thumbnail && <img src={info.thumbnail} alt="" referrerPolicy="no-referrer" />}
-              <div>
-                <span className="site">{info.site}</span>
-                <h2>{info.title}</h2>
-                <p>{[info.uploader, info.duration && clock(info.duration)].filter(Boolean).join(" · ")}</p>
-              </div>
+          )}
+          {error && (
+            <div className="banner bad">
+              <Icon name="warn" />
+              <span>{error}</span>
+              <button className="link" onClick={() => setError("")}>
+                ปิด
+              </button>
             </div>
+          )}
 
-            <div className="qualities" role="radiogroup" aria-label="ความชัด">
-              {info.qualities.map((q) => (
-                <button
-                  key={q.id}
-                  role="radio"
-                  aria-checked={q.id === quality.id}
-                  className={q.id === quality.id ? "q on" : "q"}
-                  onClick={() => setQualityId(q.id)}
-                >
-                  <b>{q.label}</b>
-                  <span>{q.detail}</span>
-                  {q.size ? <small>~{bytes(q.size)}</small> : null}
-                </button>
+          {shown.length === 0 ? (
+            <div className="empty">
+              <img src={mark} alt="" />
+              <p>{jobs.length ? "ไม่มีรายการในหมวดนี้" : "วางลิงก์ที่ช่องด้านบน หรือส่งจาก extension ใน Chrome"}</p>
+            </div>
+          ) : (
+            <ul className="list">
+              {shown.map((j) => (
+                <Row key={j.id} job={j} onRetry={() => run(j)} />
               ))}
-            </div>
+            </ul>
+          )}
 
-            {!quality.audio_only && (
-              <label className="toggle">
-                <input type="checkbox" checked={compat} onChange={(e) => setCompat(e.target.checked)} />
-                <span>
-                  <b>MP4 เปิดได้ทุกที่</b>
-                  {compatCap
-                    ? ` · คลิปนี้ได้สูงสุด ${compatCap}p (ภาพ H.264)`
-                    : " · เปิดใน QuickTime, iPhone, ทีวีได้"}
-                </span>
-              </label>
+          <footer className="status">
+            <button className="link quiet" onClick={pickDir} title={dir}>
+              บันทึกที่ {homeShort(dir)}
+            </button>
+            {tools?.version && <span>yt-dlp {tools.version}</span>}
+            <span className="grow" />
+            {jobs.some((j) => !running(j)) && (
+              <button className="link quiet" onClick={() => setJobs((js) => js.filter(running))}>
+                ล้างรายการที่จบแล้ว
+              </button>
             )}
+            {active.length > 0 && (
+              <span>
+                {active.length} กำลังโหลด{speed ? ` · ${bytes(speed)}/s` : ""}
+              </span>
+            )}
+          </footer>
+        </main>
+      </div>
 
-            <div className="row end">
-              <button className="folder" onClick={pickDir} title={dir}>
-                บันทึกที่ <b>{dir.split("/").pop() || dir}</b>
-              </button>
-              <button className="primary big" onClick={download}>
-                ดาวน์โหลด
-              </button>
+      {(info || probing) && (
+        <Sheet onCancel={closeSheet} onConfirm={download}>
+          {!info ? (
+            <div className="loading">
+              <span className="spin dark" /> กำลังดึงข้อมูล…
             </div>
-          </section>
-        )}
+          ) : (
+            <>
+              <div className="meta">
+                {info.thumbnail ? (
+                  <img src={info.thumbnail} alt="" referrerPolicy="no-referrer" />
+                ) : (
+                  <div className="thumb">
+                    <Icon name="film" size={22} />
+                  </div>
+                )}
+                <div>
+                  <h2>{info.title}</h2>
+                  <p>{[siteName(info.site), info.uploader, info.duration && clock(info.duration)].filter(Boolean).join(" · ")}</p>
+                </div>
+              </div>
+              <div className="form">
+                <label htmlFor="kind">รูปแบบ</label>
+                <select id="kind" value={useAudio ? "audio" : "video"} onChange={(e) => setAudioMode(e.target.value === "audio")}>
+                  <option value="video">วิดีโอ</option>
+                  {audioQuality && <option value="audio">เสียงอย่างเดียว (MP3)</option>}
+                </select>
+                {!useAudio && (
+                  <>
+                    <label htmlFor="q">ความชัด</label>
+                    <select id="q" value={quality?.id} onChange={(e) => setQualityId(e.target.value)}>
+                      {videoQualities.map((q) => (
+                        <option key={q.id} value={q.id}>
+                          {qualityLabel(q)}
+                        </option>
+                      ))}
+                    </select>
+                    <span />
+                    <label className="check">
+                      <input type="checkbox" checked={compat} onChange={(e) => setCompat(e.target.checked)} />
+                      MP4 เปิดได้ทุกที่
+                      <em>{compatCap ? `· คลิปนี้ได้สูงสุด ${compatCap}p` : "· QuickTime, iPhone, ทีวี"}</em>
+                    </label>
+                  </>
+                )}
+                {useAudio && audioQuality?.size ? (
+                  <>
+                    <span />
+                    <em className="note">~{bytes(audioQuality.size)}</em>
+                  </>
+                ) : null}
+                <label>บันทึกที่</label>
+                <button className="select" onClick={pickDir} title={dir}>
+                  <Icon name="folder" />
+                  <span>{dir.split("/").pop() || dir}</span>
+                </button>
+              </div>
+            </>
+          )}
+          <div className="buttons">
+            <button className="btn" onClick={closeSheet}>
+              ยกเลิก
+            </button>
+            <button className="btn primary" disabled={!info} onClick={download}>
+              ดาวน์โหลด
+            </button>
+          </div>
+        </Sheet>
+      )}
 
-        {jobs.length > 0 && (
-          <section className="jobs">
-            <div className="row">
-              <h3>รายการดาวน์โหลด</h3>
-              <button
-                className="ghost"
-                onClick={() => setJobs((js) => js.filter((j) => j.status === "downloading" || j.status === "processing"))}
-              >
-                ล้างที่เสร็จแล้ว
-              </button>
-            </div>
-            {jobs.map((j) => (
-              <JobRow key={j.id} job={j} onRetry={() => run(j)} />
-            ))}
-          </section>
-        )}
-      </main>
+      {settings && (
+        <Sheet onCancel={() => setSettings(false)} onConfirm={() => setSettings(false)}>
+          <h2 className="sheet-title">ตั้งค่า</h2>
+          <div className="form">
+            <label>บันทึกที่</label>
+            <button className="select" onClick={pickDir} title={dir}>
+              <Icon name="folder" />
+              <span>{homeShort(dir)}</span>
+            </button>
+            <label>ค่าเริ่มต้น</label>
+            <label className="check">
+              <input type="checkbox" checked={compat} onChange={(e) => setCompat(e.target.checked)} />
+              MP4 เปิดได้ทุกที่
+            </label>
+            <label>yt-dlp</label>
+            <span className={tools?.ytdlp ? "fact" : "fact bad"}>{tools?.ytdlp ? `${tools.version} · ${tools.ytdlp}` : "ไม่พบ"}</span>
+            <label>ffmpeg</label>
+            <span className={tools?.ffmpeg ? "fact" : "fact bad"}>{tools?.ffmpeg ?? "ไม่พบ"}</span>
+          </div>
+          <div className="buttons">
+            <button className="btn" onClick={() => invoke<Tools>("tools").then(setTools)}>
+              ตรวจเครื่องมือใหม่
+            </button>
+            <button className="btn primary" onClick={() => setSettings(false)}>
+              เสร็จ
+            </button>
+          </div>
+        </Sheet>
+      )}
     </div>
   );
 }
 
-function JobRow({ job: j, onRetry }: { job: Job; onRetry: () => void }) {
-  const pct = j.total && j.done != null ? Math.min(100, (j.done / j.total) * 100) : null;
-  const running = j.status === "downloading" || j.status === "processing";
+/** macOS-style sheet: drops from under the toolbar, Esc cancels, Enter confirms. */
+function Sheet({ children, onCancel, onConfirm }: { children: React.ReactNode; onCancel: () => void; onConfirm: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onCancel();
+      else if (e.key === "Enter" && !(e.target instanceof HTMLSelectElement) && !(e.target instanceof HTMLButtonElement)) {
+        e.preventDefault();
+        onConfirm();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
   return (
-    <div className={`job ${j.status}`}>
-      {j.thumbnail ? <img src={j.thumbnail} alt="" referrerPolicy="no-referrer" /> : <div className="thumb" />}
-      <div className="body">
-        <div className="title">{j.title}</div>
-        <div className="sub">
-          {j.status === "downloading" &&
-            [
-              j.audio ? "เสียง" : "ภาพ",
-              pct != null && `${pct.toFixed(0)}%`,
-              j.speed && `${bytes(j.speed)}/s`,
-              j.eta != null && `เหลือ ${clock(j.eta)}`,
-              j.total && bytes(j.total),
-            ]
-              .filter(Boolean)
-              .join(" · ")}
-          {j.status === "processing" && "กำลังรวมไฟล์…"}
-          {j.status === "done" && `เสร็จแล้ว · ${j.quality}`}
-          {j.status === "error" && <span className="err">{j.error}</span>}
-          {j.status === "cancelled" && "ยกเลิกแล้ว"}
+    <>
+      <div className="dim" onClick={onCancel} />
+      <div className="sheet" role="dialog" aria-modal>
+        {children}
+      </div>
+    </>
+  );
+}
+
+function Row({ job: j, onRetry }: { job: Job; onRetry: () => void }) {
+  const pct = j.total && j.done != null ? Math.min(100, (j.done / j.total) * 100) : null;
+  const act = running(j);
+  const sub =
+    j.status === "downloading"
+      ? [
+          j.site,
+          j.quality,
+          j.audio ? "เสียง" : null,
+          pct != null && `${pct.toFixed(0)}%`,
+          j.speed && `${bytes(j.speed)}/s`,
+          j.eta != null && `เหลือ ${clock(j.eta)}`,
+        ]
+      : j.status === "processing"
+        ? [j.site, j.quality, "กำลังรวมไฟล์…"]
+        : j.status === "done"
+          ? [j.site, j.quality]
+          : j.status === "cancelled"
+            ? [j.site, "ยกเลิกแล้ว"]
+            : [j.error];
+  return (
+    <li className={`row ${j.status}`} onDoubleClick={() => j.path && revealItemInDir(j.path)}>
+      {j.thumbnail ? (
+        <img src={j.thumbnail} alt="" referrerPolicy="no-referrer" />
+      ) : (
+        <div className="thumb">
+          <Icon name="film" />
         </div>
-        {running && (
-          <div className="track">
-            <div className={pct == null || j.status === "processing" ? "fill busy" : "fill"} style={{ width: pct != null ? `${pct}%` : undefined }} />
+      )}
+      <div className="text">
+        <div className="title">{j.title}</div>
+        <div className="sub">{sub.filter(Boolean).join(" · ")}</div>
+        {act && (
+          <div className="bar">
+            <i className={pct == null || j.status === "processing" ? "busy" : ""} style={{ width: pct != null ? `${pct}%` : undefined }} />
           </div>
         )}
       </div>
-      {running && (
-        <button className="ghost" onClick={() => invoke("cancel", { id: j.id })}>
-          ยกเลิก
+      {act && (
+        <button className="tool" title="ยกเลิก" onClick={() => invoke("cancel", { id: j.id })}>
+          <Icon name="x" />
         </button>
       )}
-      {(j.status === "error" || j.status === "cancelled") && j.format && (
-        <button className="ghost" onClick={onRetry}>
-          ลองใหม่
+      {failed(j) && j.format && (
+        <button className="tool" title="ลองใหม่" onClick={onRetry}>
+          <Icon name="retry" />
         </button>
       )}
       {j.status === "done" && j.path && (
-        <button className="ghost" onClick={() => revealItemInDir(j.path!)}>
-          แสดงใน Finder
+        <button className="tool" title="แสดงใน Finder" onClick={() => revealItemInDir(j.path!)}>
+          <Icon name="reveal" />
         </button>
       )}
-    </div>
+    </li>
   );
 }
