@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import { getCurrent, onOpenUrl } from "@tauri-apps/plugin-deep-link";
 import logo from "../assets/logo/tile.svg";
 
 type Tools = { ytdlp: string | null; ffmpeg: string | null; version: string | null };
@@ -60,6 +61,17 @@ const store = {
   },
 };
 
+// siriloader://download?url=<page or media URL> — sent by the browser extension.
+// Only ever fills the box and probes; any web page can open this scheme, so the user still clicks Download.
+function linkFrom(deep: string) {
+  try {
+    const u = new URL(new URL(deep).searchParams.get("url") ?? "");
+    return u.protocol === "http:" || u.protocol === "https:" ? u.href : null;
+  } catch {
+    return null;
+  }
+}
+
 function bytes(n?: number | null) {
   if (!n) return "";
   const u = ["B", "KB", "MB", "GB"];
@@ -115,7 +127,19 @@ export default function App() {
         }),
       ),
     );
-    return () => void off.then((f) => f());
+    const take = (urls: string[] | null) => {
+      const link = urls?.map(linkFrom).find(Boolean);
+      if (link) {
+        setUrl(link);
+        probe(link);
+      }
+    };
+    getCurrent().then(take);
+    const offLink = onOpenUrl(take);
+    return () => {
+      off.then((f) => f());
+      offLink.then((f) => f());
+    };
   }, []);
 
   useEffect(() => store.set("jobs", jobs.slice(0, 100)), [jobs]);
