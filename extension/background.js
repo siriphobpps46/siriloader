@@ -1,33 +1,60 @@
-// Hands a URL to the SiriLoader app. First try the app's loopback inbox (works whenever the
-// app is open and tells us it arrived); if the app isn't running, fall back to the
-// siriloader:// deep link so macOS launches it.
-const INBOX = "http://127.0.0.1:47821/send";
+// Two jobs: watch each tab's network traffic for video streams/files (the badge counts them,
+// the popup lists them), and the right-click "send to SiriLoader" menu items.
+import { send } from "./send.js";
 
-function flag(tabId, text, title, color = "#172C66") {
-  chrome.action.setBadgeBackgroundColor({ tabId, color });
-  chrome.action.setBadgeText({ tabId, text });
-  chrome.action.setTitle({ tabId, title });
-  setTimeout(() => {
-    chrome.action.setBadgeText({ tabId, text: "" });
-    chrome.action.setTitle({ tabId, title: "ส่งหน้านี้เข้า SiriLoader" });
-  }, 3000);
+const STREAM_URL = /\.(m3u8|mpd)(\?|#|$)/i;
+const FILE_URL = /\.(mp4|webm|m4v|mov|mkv|flv)(\?|#|$)/i;
+const STREAM_TYPE = /mpegurl|dash\+xml/i;
+// Segments of a stream, and YouTube's own chunks (yt-dlp handles YouTube from the page URL).
+const SKIP = /\.(ts|m4s|aac|vtt)(\?|#|$)|googlevideo\.com|video\/mp2t/i;
+const MAX = 30;
+
+const key = (tabId) => `t${tabId}`;
+// The worker can be woken by many requests at once; queue writes so none clobber each other.
+let queue = Promise.resolve();
+const update = (tabId, fn) =>
+  (queue = queue.then(async () => {
+    const k = key(tabId);
+    const list = fn((await chrome.storage.session.get(k))[k] ?? []);
+    await chrome.storage.session.set({ [k]: list });
+    badge(tabId, list.length);
+  }));
+
+function badge(tabId, n) {
+  chrome.action.setBadgeBackgroundColor({ tabId, color: "#172C66" }).catch(() => {});
+  chrome.action.setBadgeText({ tabId, text: n ? String(n) : "" }).catch(() => {});
 }
 
-async function send(url, tabId) {
-  if (!/^https?:\/\//i.test(url ?? "")) {
-    return flag(tabId, "!", "ส่งได้เฉพาะหน้าเว็บ http/https", "#C0392B");
-  }
-  try {
-    const r = await fetch(INBOX, { method: "POST", headers: { "X-SiriLoader": "1" }, body: url });
-    if (!r.ok) throw new Error(String(r.status));
-    flag(tabId, "✓", "ส่งเข้า SiriLoader แล้ว");
-  } catch {
-    chrome.tabs.update(tabId, { url: "siriloader://download?url=" + encodeURIComponent(url) });
-    flag(tabId, "…", "กำลังเปิด SiriLoader — ถ้าไม่ขึ้น ให้เปิดแอปเองแล้วกดอีกครั้ง");
-  }
+function header(d, name) {
+  return d.responseHeaders?.find((h) => h.name.toLowerCase() === name)?.value ?? "";
 }
 
-chrome.action.onClicked.addListener((tab) => send(tab.url, tab.id));
+chrome.webRequest.onHeadersReceived.addListener(
+  (d) => {
+    if (d.tabId < 0) return;
+    if (d.type === "main_frame") return void update(d.tabId, () => []);
+    const type = header(d, "content-type");
+    if (d.statusCode >= 400 || SKIP.test(d.url) || SKIP.test(type)) return;
+
+    let kind = null;
+    if (STREAM_URL.test(d.url) || STREAM_TYPE.test(type)) kind = /mpd|dash/i.test(d.url + type) ? "DASH" : "HLS";
+    else if (FILE_URL.test(d.url) || /^video\//i.test(type)) kind = "MP4";
+    if (!kind) return;
+
+    // Range requests: the full size is after the slash in Content-Range.
+    const size = Number(header(d, "content-range").split("/")[1]) || (d.statusCode === 200 && Number(header(d, "content-length"))) || null;
+    // ponytail: referer is the requesting frame's origin; good enough for CDNs that check
+    // origin. Upgrade path is webNavigation.getFrame for the frame's full URL.
+    const referer = d.initiator && d.initiator !== "null" ? d.initiator + "/" : "";
+    update(d.tabId, (list) =>
+      list.some((m) => m.url === d.url) ? list : [...list, { url: d.url, kind, size, referer, at: Date.now() }].slice(-MAX),
+    );
+  },
+  { urls: ["<all_urls>"], types: ["main_frame", "xmlhttprequest", "media", "other"] },
+  ["responseHeaders"],
+);
+
+chrome.tabs.onRemoved.addListener((tabId) => chrome.storage.session.remove(key(tabId)));
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.create({ id: "page", title: "ส่งหน้านี้เข้า SiriLoader", contexts: ["page"] });
@@ -35,8 +62,13 @@ chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.create({ id: "media", title: "ส่งวิดีโอ/เสียงนี้เข้า SiriLoader", contexts: ["video", "audio"] });
 });
 
-chrome.contextMenus.onClicked.addListener((info, tab) => {
+chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   // A <video> src is often a blob: URL yt-dlp can't fetch; fall back to the page.
-  const url = { link: info.linkUrl, media: info.srcUrl, page: info.pageUrl }[info.menuItemId];
-  send(/^https?:/i.test(url ?? "") ? url : info.pageUrl, tab.id);
+  const picked = { link: info.linkUrl, media: info.srcUrl, page: info.pageUrl }[info.menuItemId];
+  const url = /^https?:/i.test(picked ?? "") ? picked : info.pageUrl;
+  const sniffed = url !== info.pageUrl && info.menuItemId === "media";
+  const result = await send({ url, referer: sniffed ? info.pageUrl : "", title: sniffed ? tab.title : "" }, tab.id);
+  chrome.action.setBadgeText({ tabId: tab.id, text: { ok: "✓", launch: "…", bad: "!" }[result] });
+  const k = key(tab.id);
+  setTimeout(async () => badge(tab.id, ((await chrome.storage.session.get(k))[k] ?? []).length), 3000);
 });

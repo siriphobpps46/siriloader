@@ -109,8 +109,9 @@ fn last_error(stderr: &str) -> String {
 }
 
 #[tauri::command]
-pub async fn probe(url: String) -> Result<Info, String> {
+pub async fn probe(url: String, referer: Option<String>) -> Result<Info, String> {
     let mut cmd = ytdlp()?;
+    with_referer(&mut cmd, referer);
     cmd.args(["-J", "--", url.trim()]);
     let out = tauri::async_runtime::spawn_blocking(move || cmd.output())
         .await
@@ -208,6 +209,22 @@ fn summarize(v: &Value) -> Info {
     }
 }
 
+fn with_referer(cmd: &mut Command, referer: Option<String>) {
+    if let Some(r) = referer.filter(|r| r.starts_with("http")) {
+        cmd.arg("--referer").arg(r);
+    }
+}
+
+/// A page title as a yt-dlp output template: no path separators, `%` escaped, not too long.
+fn name_template(name: &str) -> String {
+    let clean: String = name
+        .chars()
+        .map(|c| if matches!(c, '/' | ':' | '\\') || c.is_control() { ' ' } else { c })
+        .take(150)
+        .collect();
+    format!("{}.%(ext)s", clean.trim().replace('%', "%%"))
+}
+
 fn num(s: Option<&str>) -> Option<f64> {
     s.and_then(|s| s.parse().ok())
 }
@@ -222,12 +239,20 @@ pub fn start(
     audio_only: bool,
     compat: bool,
     dir: String,
+    referer: Option<String>,
+    name: Option<String>,
 ) -> Result<(), String> {
     let mut cmd = ytdlp()?;
+    with_referer(&mut cmd, referer);
+    let output = match name.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
+        Some(n) => name_template(n),
+        None => "%(title).150B [%(id)s].%(ext)s".into(),
+    };
     cmd.args(["--newline", "--no-simulate", "--progress", "--no-quiet", "-f", &format])
         .arg("-P")
         .arg(PathBuf::from(&dir))
-        .args(["-o", "%(title).150B [%(id)s].%(ext)s"])
+        .arg("-o")
+        .arg(output)
         .args([
             "--progress-template",
             "download:SLP|%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.total_bytes_estimate)s|%(progress.speed)s|%(progress.eta)s|%(info.vcodec)s",
@@ -329,6 +354,11 @@ mod tests {
         let i = summarize(&json!({"formats": [{"url": "x"}]}));
         assert_eq!(i.qualities.len(), 1);
         assert_eq!(i.qualities[0].format, "bv*+ba/b");
+    }
+
+    #[test]
+    fn name_template_is_safe() {
+        assert_eq!(name_template("a/b: 100% c"), "a b  100%% c.%(ext)s");
     }
 
     #[test]

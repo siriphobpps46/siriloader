@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="th">
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      :root {
+        --navy: #172c66;
+        --navy-deep: #0f1d45;
+        --navy-soft: #e9eef9;
+        --line: #dfe5f0;
+        --muted: #5d6886;
+        font: 13px -apple-system, "Sukhumvit Set", "Helvetica Neue", sans-serif;
+        color: var(--navy-deep);
+      }
+      body { margin: 0; width: 360px; background: #fff; }
+      header { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+      header img { width: 20px; height: 20px; }
+      header b { font-size: 14px; }
+      header span { color: var(--navy); }
+      main { padding: 12px 14px 14px; display: grid; gap: 10px; }
+      button { font: inherit; cursor: pointer; border: 0; }
+      .page { background: var(--navy); color: #fff; font-weight: 600; padding: 9px 12px; border-radius: 9px; }
+      .page:hover { background: var(--navy-deep); }
+      h2 { font-size: 12px; font-weight: 600; color: var(--muted); margin: 4px 0 0; }
+      .hint { color: var(--muted); margin: 0; line-height: 1.5; }
+      ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; max-height: 320px; overflow-y: auto; }
+      li button {
+        width: 100%; display: grid; grid-template-columns: auto 1fr auto; gap: 2px 8px; align-items: center;
+        text-align: left; padding: 8px 10px; border: 1px solid var(--line); border-radius: 9px; background: #fff; color: inherit;
+      }
+      li button:hover { border-color: var(--navy); background: var(--navy-soft); }
+      .kind { font-size: 10px; font-weight: 700; color: var(--navy); background: var(--navy-soft); padding: 2px 6px; border-radius: 5px; }
+      .file { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .size { color: var(--muted); font-size: 12px; }
+      .host { grid-column: 2 / 4; color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      #status { min-height: 16px; margin: 0; font-weight: 500; }
+      #status.bad { color: #c0392b; }
+    </style>
+  </head>
+  <body>
+    <header><img src="icons/32.png" alt="" /><b>Siri<span>Loader</span></b></header>
+    <main>
+      <button class="page" id="page">ส่งหน้านี้</button>
+      <p class="hint">ใช้กับเว็บที่ yt-dlp รู้จัก เช่น YouTube, X, TikTok, IG</p>
+      <h2 id="found-title">ไฟล์วิดีโอที่เจอในหน้านี้</h2>
+      <ul id="list"></ul>
+      <p class="hint" id="empty">ยังไม่เจอ — กดเล่นวิดีโอในหน้าเว็บก่อน แล้วเปิดหน้าต่างนี้ใหม่</p>
+      <p id="status"></p>
+    </main>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

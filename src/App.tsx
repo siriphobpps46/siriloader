@@ -17,6 +17,7 @@ type Info = {
   qualities: Quality[];
   h264_max: number | null;
 };
+type Incoming = { url: string; referer?: string | null; title?: string | null };
 type Status = "downloading" | "processing" | "done" | "error" | "cancelled";
 type Job = {
   id: string;
@@ -27,6 +28,8 @@ type Job = {
   format: string;
   audioOnly: boolean;
   compat?: boolean;
+  referer?: string | null;
+  name?: string | null;
   dir: string;
   status: Status;
   done?: number | null;
@@ -61,13 +64,14 @@ const store = {
   },
 };
 
-// siriloader://download?url=<URL>, or a bare URL from the extension's loopback inbox.
-// Only ever fills the box and probes; any web page can open this scheme, so the user still clicks Download.
-function linkFrom(deep: string) {
+const isWeb = (s?: string | null) => !!s && /^https?:\/\//i.test(s);
+
+// siriloader://download?url=&referer=&title= — the extension's fallback when the app is closed.
+// Like the loopback inbox, it only fills the box and probes; the user still clicks Download.
+function fromDeepLink(deep: string): Incoming | null {
   try {
-    const d = new URL(deep);
-    const u = d.protocol === "siriloader:" ? new URL(d.searchParams.get("url") ?? "") : d;
-    return u.protocol === "http:" || u.protocol === "https:" ? u.href : null;
+    const p = new URL(deep).searchParams;
+    return { url: p.get("url") ?? "", referer: p.get("referer"), title: p.get("title") };
   } catch {
     return null;
   }
@@ -99,6 +103,8 @@ export default function App() {
   const [qualityId, setQualityId] = useState(() => store.get("quality", "best"));
   const [dir, setDir] = useState(() => store.get("dir", ""));
   const [compat, setCompat] = useState(() => store.get("compat", false));
+  // Referer + page title that came with a sniffed link; dropped as soon as the user edits the box.
+  const [source, setSource] = useState<Incoming | null>(null);
   const [jobs, setJobs] = useState<Job[]>(() =>
     store.get<Job[]>("jobs", []).map((j) =>
       j.status === "downloading" || j.status === "processing" ? { ...j, status: "cancelled" } : j,
@@ -128,16 +134,16 @@ export default function App() {
         }),
       ),
     );
-    const take = (urls: string[] | null) => {
-      const link = urls?.map(linkFrom).find(Boolean);
-      if (link) {
-        setUrl(link);
-        probe(link);
-      }
+    const take = (inc: Incoming | null) => {
+      if (!inc || !isWeb(inc.url)) return;
+      const src = { ...inc, referer: isWeb(inc.referer) ? inc.referer : null };
+      setUrl(src.url);
+      setSource(src);
+      probe(src.url, src);
     };
-    getCurrent().then(take);
-    const offLink = onOpenUrl(take);
-    const offInbox = listen<string>("open-url", (e) => take([e.payload]));
+    getCurrent().then((urls) => take(urls?.[0] ? fromDeepLink(urls[0]) : null));
+    const offLink = onOpenUrl((urls) => take(fromDeepLink(urls[0])));
+    const offInbox = listen<Incoming>("open-url", (e) => take(e.payload));
     return () => {
       off.then((f) => f());
       offLink.then((f) => f());
@@ -150,15 +156,16 @@ export default function App() {
   useEffect(() => store.set("quality", qualityId), [qualityId]);
   useEffect(() => store.set("compat", compat), [compat]);
 
-  async function probe(target = url) {
+  async function probe(target = url, src = source) {
     if (!target.trim()) return;
     const seq = ++probeSeq.current;
     setProbing(true);
     setError("");
     setInfo(null);
     try {
-      const i = await invoke<Info>("probe", { url: target });
-      if (seq === probeSeq.current) setInfo(i);
+      const i = await invoke<Info>("probe", { url: target, referer: src?.referer ?? null });
+      // A sniffed stream is titled "master"/"index"; the page title is what the user knows it by.
+      if (seq === probeSeq.current) setInfo(src?.title ? { ...i, title: src.title } : i);
     } catch (e) {
       if (seq === probeSeq.current) setError(String(e));
     } finally {
@@ -183,11 +190,14 @@ export default function App() {
       format: quality.format,
       audioOnly: quality.audio_only,
       compat: useCompat,
+      referer: source?.referer,
+      name: source?.title,
       dir,
       status: "downloading",
     };
     setJobs((js) => [job, ...js]);
     setUrl("");
+    setSource(null);
     setInfo(null);
     run(job);
   }
@@ -203,6 +213,8 @@ export default function App() {
         audioOnly: job.audioOnly,
         compat: !!job.compat,
         dir: job.dir,
+        referer: job.referer ?? null,
+        name: job.name ?? null,
       });
     } catch (e) {
       setJobs((js) => js.map((j) => (j.id === job.id ? { ...j, status: "error", error: String(e) } : j)));
@@ -260,13 +272,17 @@ export default function App() {
               autoFocus
               value={url}
               placeholder="https://…"
-              onChange={(e) => setUrl(e.target.value)}
+              onChange={(e) => {
+                setUrl(e.target.value);
+                setSource(null);
+              }}
               onPaste={(e) => {
                 const t = e.clipboardData.getData("text").trim();
                 if (/^https?:\/\//i.test(t)) {
                   e.preventDefault();
                   setUrl(t);
-                  probe(t);
+                  setSource(null);
+                  probe(t, null);
                 }
               }}
             />
